@@ -124,6 +124,8 @@ def train_vae(
 
     if save_dir is None:
         save_dir = f"./{ds_name}_{in_dim}_{latent_dim}_{hidden_dim}"
+        if train_size is not None:
+            save_dir += f"_{train_size}"
 
     loader_kwargs = {}
     loader_kwargs["batch_size"] = 256

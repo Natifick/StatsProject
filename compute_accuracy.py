@@ -20,6 +20,9 @@ for i, arg in enumerate(args.model_dir.split("/")[-1].split("_")):
     else:
         model_args.append(None)
 
+if len(model_args) > 3:
+    model_args = model_args[:3]
+
 model = VAE(*model_args)
 model.load_state_dict(
     torch.load(f"{args.model_dir}/checkpoint.pt")
