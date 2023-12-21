@@ -24,30 +24,52 @@ class Trainer:
         open(self.save_logs_path, "w").close()
 
     
-    def train(self, train_loader):
+    def train(self, train_loader, eval_loader=None):
         loss_prev, es_counter = None, 0
         for i, x in enumerate(train_loader):
             loss = self._train_step(x.to(self.device))
             if i % self.log_every == 0:
+                if eval_loader is not None:
+                    loss = self.eval(eval_loader)
+
                 with open(self.save_logs_path, "a") as file:
                     file.write(f"{loss}\n")
-            if loss_prev is None:
-                loss_prev = loss
-                continue
-            if loss_prev <= loss:
-                es_counter += 1
-            else:
-                es_counter += 1
-                torch.save(self.model.state_dict(), self.save_ckpt_path)
-            if es_counter == self.early_stopping:
-                break
+
+                if loss_prev is None:
+                    loss_prev = loss
+                    continue
+                if loss_prev <= loss:
+                    es_counter += 1
+                else:
+                    es_counter += 1
+                    torch.save(self.model.state_dict(), self.save_ckpt_path)
+                if es_counter == self.early_stopping:
+                    break
+
+    def eval(self, loader):
+        i, loss = 0, 0.
+        for x in loader:
+            x = x.to(self.device)
+            loss += self._eval_step(x.to(self.device))
+            i += 1
+        return loss / i
+        
+        
 
     def _train_step(self, x):
+        self.model.train()
         self.opt.zero_grad()
         loss = self.model.loss(x)
         loss.backward()
         self.opt.step()
         return loss.item()
+    
+    @torch.no_grad()
+    def _eval_step(self, x):
+        self.model.eval()
+        loss = self.model.loss(x)
+        return loss.item()
+
 
 
 class TestDataset(Dataset):
@@ -61,18 +83,31 @@ class TestDataset(Dataset):
         return self.data[idx]
 
 class MNISTDataset(Dataset):
-    def __init__(self, train=True, with_targets=False, size=None):
-        ds = torchvision.datasets.MNIST(root="./", train=train, download=True)
-        self.data = ds.data.numpy().astype("float32")
-        mu, std = np.mean(self.data), np.std(self.data)
-        self.data = (self.data - mu) / std
-        if size is None:
-            size = len(self.data)
-        self.data = self.data[:size].reshape(size, -1)
+    MU = 0.13066062
+    STD = 0.30810776
+    VAL_SIZE = 5000
 
-        self.with_targets = with_targets
+    def __init__(self, train=True, with_targets=False, size=None, is_val=False):
+        ds = torchvision.datasets.MNIST(root="./", train=train, download=True)
+        data = ds.data.numpy().astype("float32") / 255
+        data = (data - self.MU) / self.STD
+        target = ds.targets.numpy()
+        if is_val:
+            assert train
+            data = data[-self.VAL_SIZE:]
+            target = target[-self.VAL_SIZE:]
+        else:
+            if size is None:
+                size = len(data)
+                if train:
+                    size -= self.VAL_SIZE
+            data = data[:size]
+            target = target[:size]
+        
+        self.data = data.reshape(len(data), -1)
         if with_targets:
-            self.target = ds.targets.numpy()[:size]
+            self.target = target
+        self.with_targets = with_targets
 
     def __len__(self):
         return len(self.data)
@@ -84,7 +119,7 @@ class MNISTDataset(Dataset):
             return x, y
         return x
     
-class Dataloader(DataLoader):
+class InfiniteDataloader(DataLoader):
     def __init__(self, ds_name, *args, ds_kwargs=None, **kwargs):
         if ds_kwargs is None:
             ds_kwargs = {}
@@ -107,6 +142,19 @@ class Dataloader(DataLoader):
             self.ds_loader = super().__iter__()
             batch = next(self.ds_loader)
         return batch
+
+class FiniteDataloader(DataLoader):
+    def __init__(self, ds_name, *args, ds_kwargs=None, **kwargs):
+        if ds_kwargs is None:
+            ds_kwargs = {}
+        if ds_name == "test":
+            dataset = TestDataset(**ds_kwargs)
+        elif ds_name == "mnist":
+            dataset = MNISTDataset(**ds_kwargs)
+        else:
+            raise ValueError("There is not such a dataset")
+        super().__init__(dataset, *args, **kwargs)
+        self.ds_loader = super().__iter__()
 
 
 def train_vae(
@@ -133,20 +181,25 @@ def train_vae(
 
     train_kwargs = {}
     train_kwargs["log_every"] = 5
-    train_kwargs["early_stopping"] = 1000
+    train_kwargs["early_stopping"] = 240
     train_kwargs["device"] = device
     train_kwargs["save_dir"] = save_dir
     if not os.path.exists(train_kwargs["save_dir"]):
         os.mkdir(train_kwargs["save_dir"])
 
-    loader = Dataloader(
+    train_loader = InfiniteDataloader(
         ds_name,
         ds_kwargs={"size": train_size},
         **loader_kwargs,
     )
+    val_loader = FiniteDataloader(
+        ds_name,
+        ds_kwargs={"size": train_size, "is_val": True},
+        **loader_kwargs,
+    )
     model = VAE(in_dim, latent_dim, hidden_dim)
     trainer = Trainer(model, **train_kwargs)
-    trainer.train(loader)
+    trainer.train(train_loader, val_loader)
     print(f"output_dir: {save_dir}")
     return model
 
