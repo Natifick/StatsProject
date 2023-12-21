@@ -10,41 +10,45 @@ from vae import VAE
 
 
 class Trainer:
-    def __init__(self, model, opt_kwargs=None, early_stopping=100, log_every=50, device="cpu", save_dir="./"):
+    def __init__(self, model, opt_kwargs=None, early_stopping=1, device="cpu", save_dir="./"):
         if opt_kwargs is None:
             opt_kwargs = {}
         self.model = model.to(device)
         opt_kwargs["lr"] = opt_kwargs.get("lr", 3e-4)
         self.opt = torch.optim.Adam(model.parameters(), **opt_kwargs)
         self.early_stopping = early_stopping
-        self.log_every = log_every
         self.device = device
         self.save_ckpt_path = f"{save_dir}/checkpoint.pt"
         self.save_logs_path = f"{save_dir}/logs.txt"
         open(self.save_logs_path, "w").close()
-
     
-    def train(self, train_loader, eval_loader=None):
+    def train(self, train_loader, n_epochs=None, eval_loader=None):
+        if n_epochs is None:
+            n_epochs = 1024
+
         loss_prev, es_counter = None, 0
-        for i, x in enumerate(train_loader):
-            loss = self._train_step(x.to(self.device))
-            if i % self.log_every == 0:
-                if eval_loader is not None:
-                    loss = self.eval(eval_loader)
+        for _ in range(n_epochs):
+            loss = 0
+            for i, x in enumerate(train_loader):
+                loss += self._train_step(x.to(self.device))
+            loss /= i
 
-                with open(self.save_logs_path, "a") as file:
-                    file.write(f"{loss}\n")
+            if eval_loader is not None:
+                loss = self.eval(eval_loader)
 
-                if loss_prev is None:
-                    loss_prev = loss
-                    continue
-                if loss_prev <= loss:
-                    es_counter += 1
-                else:
-                    es_counter += 1
-                    torch.save(self.model.state_dict(), self.save_ckpt_path)
-                if es_counter == self.early_stopping:
-                    break
+            with open(self.save_logs_path, "a") as file:
+                file.write(f"{loss}\n")
+
+            if loss_prev is None:
+                loss_prev = loss
+                continue
+            if loss_prev <= loss:
+                es_counter += 1
+            else:
+                es_counter += 1
+                torch.save(self.model.state_dict(), self.save_ckpt_path)
+            if es_counter == self.early_stopping:
+                break
 
     def eval(self, loader):
         i, loss = 0, 0.
@@ -53,8 +57,6 @@ class Trainer:
             loss += self._eval_step(x.to(self.device))
             i += 1
         return loss / i
-        
-        
 
     def _train_step(self, x):
         self.model.train()
@@ -71,7 +73,6 @@ class Trainer:
         return loss.item()
 
 
-
 class TestDataset(Dataset):
     def __init__(self, size):
         self.data = torch.rand(size, 2)
@@ -82,6 +83,7 @@ class TestDataset(Dataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
+
 class MNISTDataset(Dataset):
     MU = 0.13066062
     STD = 0.30810776
@@ -89,7 +91,7 @@ class MNISTDataset(Dataset):
 
     def __init__(self, train=True, with_targets=False, size=None, is_val=False):
         ds = torchvision.datasets.MNIST(root="./", train=train, download=True)
-        data = ds.data.numpy().astype("float32") / 255
+        data = ds.data.numpy().astype("float32") / 255.
         data = (data - self.MU) / self.STD
         target = ds.targets.numpy()
         if is_val:
@@ -118,30 +120,7 @@ class MNISTDataset(Dataset):
             y = torch.tensor(self.target[idx])
             return x, y
         return x
-    
-class InfiniteDataloader(DataLoader):
-    def __init__(self, ds_name, *args, ds_kwargs=None, **kwargs):
-        if ds_kwargs is None:
-            ds_kwargs = {}
-        if ds_name == "test":
-            dataset = TestDataset(**ds_kwargs)
-        elif ds_name == "mnist":
-            dataset = MNISTDataset(**ds_kwargs)
-        else:
-            raise ValueError("There is not such a dataset")
-        super().__init__(dataset, *args, **kwargs)
-        self.ds_loader = super().__iter__()
 
-    def __iter__(self):
-        return self
-    
-    def __next__(self):
-        try:
-            batch = next(self.ds_loader)
-        except StopIteration:
-            self.ds_loader = super().__iter__()
-            batch = next(self.ds_loader)
-        return batch
 
 class FiniteDataloader(DataLoader):
     def __init__(self, ds_name, *args, ds_kwargs=None, **kwargs):
@@ -180,14 +159,13 @@ def train_vae(
     loader_kwargs["shuffle"] = True
 
     train_kwargs = {}
-    train_kwargs["log_every"] = 5
-    train_kwargs["early_stopping"] = 240
+    train_kwargs["early_stopping"] = 20
     train_kwargs["device"] = device
     train_kwargs["save_dir"] = save_dir
     if not os.path.exists(train_kwargs["save_dir"]):
         os.mkdir(train_kwargs["save_dir"])
 
-    train_loader = InfiniteDataloader(
+    train_loader = FiniteDataloader(
         ds_name,
         ds_kwargs={"size": train_size},
         **loader_kwargs,
@@ -199,7 +177,7 @@ def train_vae(
     )
     model = VAE(in_dim, latent_dim, hidden_dim)
     trainer = Trainer(model, **train_kwargs)
-    trainer.train(train_loader, val_loader)
+    trainer.train(train_loader, eval_loader=val_loader)
     print(f"output_dir: {save_dir}")
     return model
 
