@@ -81,7 +81,7 @@ def get_normal_nll(x, mean, log_std):
     return (
         0.5 * np.log(2 * np.pi)
         + log_std
-        + (x - mean) ** 2 * np.exp(-2 * log_std) * 0.5
+        + (x - mean) ** 2 * torch.exp(-2 * log_std) * 0.5
     )
 
 
