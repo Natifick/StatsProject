@@ -31,14 +31,19 @@ model.load_state_dict(
 train_ds = MNISTDataset(train=True, with_targets=True)
 X_train = torch.tensor(train_ds.data)
 Z_train = model.encode(X_train).cpu().numpy()
-linreg = LogisticRegression(random_state=0).fit(Z_train, train_ds.target)
+
 
 test_ds = MNISTDataset(train=False, with_targets=True)
 X_test = torch.tensor(test_ds.data)
 Z_test = model.encode(X_test).cpu().numpy()
-pred = linreg.predict(Z_test)
 
+n_seeds, score = 1, 0.
+for seed in range(n_seeds):
+    linreg = LogisticRegression(random_state=seed, max_iter=500).fit(Z_train, train_ds.target)
+    pred = linreg.predict(Z_test)
+
+    score += accuracy_score(test_ds.target, pred) / n_seeds
 output_file = f"{args.model_dir}/accuracy.txt"
 with open(output_file, "w") as file:
-    file.write(f"{accuracy_score(test_ds.target, pred)}\n")
+    file.write(f"{score}\n")
 print(f"output_file: {output_file}")

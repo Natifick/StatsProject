@@ -94,6 +94,11 @@ class MNISTDataset(Dataset):
         data = ds.data.numpy().astype("float32") / 255.
         data = (data - self.MU) / self.STD
         target = ds.targets.numpy()
+
+        # idcs = np.random.randint(len(target), size=len(target))
+        # data = data[idcs]
+        # target = target[idcs]
+
         if is_val:
             assert train
             data = data[-self.VAL_SIZE:]
@@ -105,7 +110,7 @@ class MNISTDataset(Dataset):
                     size -= self.VAL_SIZE
             data = data[:size]
             target = target[:size]
-        
+
         self.data = data.reshape(len(data), -1)
         if with_targets:
             self.target = target
@@ -153,6 +158,15 @@ def train_vae(
         save_dir = f"./{ds_name}_{in_dim}_{latent_dim}_{hidden_dim}"
         if train_size is not None:
             save_dir += f"_{train_size}"
+        save_dir += "_0"
+        if os.path.exists(save_dir):
+            num = 0
+            while os.path.exists(save_dir):
+                tmp = save_dir.split("_")
+                tmp[-1] = str(num)
+                save_dir = "_".join(tmp)
+                num += 1
+            
 
     loader_kwargs = {}
     loader_kwargs["batch_size"] = 256
@@ -179,7 +193,7 @@ def train_vae(
     trainer = Trainer(model, **train_kwargs)
     trainer.train(train_loader, eval_loader=val_loader)
     print(f"output_dir: {save_dir}")
-    return model
+    return save_dir
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
